@@ -4,11 +4,12 @@ import pandas as pd
 import joblib
 import os
 import uvicorn
-from typing import Optional, Dict, Any
-
-from fastapi import FastAPI, HTTPException
+from typing import Optional, Dict, Any, Union
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, validator
+from fastapi.exceptions import RequestValidationError
 
 # ----------------- Logging Setup -----------------
 logging.basicConfig(
@@ -24,19 +25,44 @@ app = FastAPI(
     version="3.0.0"
 )
 
+# Enhanced CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # In production, replace with your app's domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 # ----------------- Request Schema ----------------
 class UserInput(BaseModel):
-    Age: float = Field(..., ge=18, le=80, description="User's age in years")
-    Calc_BMI: float = Field(..., ge=15, le=40, description="User's calculated BMI")
-    Workout_Frequency: float = Field(..., ge=0, le=7, description="Workout frequency in days per week")
+    # More flexible field names with aliases for JavaScript compatibility
+    age: float = Field(..., ge=18, le=80, description="User's age in years", alias="Age")
+    bmi: float = Field(..., ge=15, le=40, description="User's calculated BMI", alias="Calc_BMI")
+    workout_frequency: float = Field(..., ge=0, le=7, description="Workout frequency in days per week", alias="Workout_Frequency")
+
+    # Allow string inputs and convert them to float
+    @validator('age', 'bmi', 'workout_frequency', pre=True)
+    def convert_to_float(cls, v):
+        if isinstance(v, str):
+            try:
+                return float(v)
+            except ValueError:
+                raise ValueError(f"Could not convert {v} to a number")
+        return v
+
+    class Config:
+        # Allow both camelCase and snake_case
+        allow_population_by_field_name = True
+        # Example: {"age": 25} or {"Age": 25} both work
+        schema_extra = {
+            "example": {
+                "age": 25,
+                "bmi": 22.5,
+                "workout_frequency": 3
+            }
+        }
 
 class PredictionResponse(BaseModel):
     difficulty_level: str
@@ -44,6 +70,26 @@ class PredictionResponse(BaseModel):
     recommendation: str
     health_score: float
     debug_info: Optional[Dict[str, Any]] = None
+
+    class Config:
+        # Convert snake_case to camelCase in response
+        json_encoders = {
+            float: lambda v: round(v, 3)  # Round floats to 3 decimal places
+        }
+        # Example response
+        schema_extra = {
+            "example": {
+                "difficultyLevel": "Medium",
+                "confidenceScore": 0.85,
+                "recommendation": "You can handle moderate intensity workouts...",
+                "healthScore": 0.65,
+                "debugInfo": {
+                    "inputData": {"age": 25, "bmi": 22.5, "workoutFrequency": 3},
+                    "healthScore": 0.65,
+                    "thresholds": {"easyThreshold": 0.57, "mediumThreshold": 0.73}
+                }
+            }
+        }
 
 # ----------------- Model Handler -----------------
 class StepSyncModel:
@@ -91,18 +137,18 @@ class StepSyncModel:
 
     def _validate_input(self, input_data: UserInput) -> None:
         """Validate input data ranges."""
-        if not (18 <= input_data.Age <= 80):
+        if not (18 <= input_data.age <= 80):
             raise HTTPException(status_code=400, detail="Age must be between 18 and 80")
-        if not (15 <= input_data.Calc_BMI <= 40):
+        if not (15 <= input_data.bmi <= 40):
             raise HTTPException(status_code=400, detail="BMI must be between 15 and 40")
-        if not (0 <= input_data.Workout_Frequency <= 7):
+        if not (0 <= input_data.workout_frequency <= 7):
             raise HTTPException(status_code=400, detail="Workout frequency must be between 0 and 7 days")
 
     def _calculate_health_score(self, input_data: UserInput) -> float:
         """Calculate health score based on input metrics."""
-        age = input_data.Age
-        bmi = input_data.Calc_BMI
-        workout_freq = input_data.Workout_Frequency
+        age = input_data.age
+        bmi = input_data.bmi
+        workout_freq = input_data.workout_frequency
         
         # Age score: Peak at 25, decline as you move away
         age_score = max(0, 1 - abs(age - 25) / 25)  # Normalized 0-1
@@ -172,9 +218,9 @@ class StepSyncModel:
                     "medium_threshold": medium_threshold
                 },
                 "score_components": {
-                    "age_score": max(0, 1 - abs(input_data.Age - 25) / 25),
-                    "bmi_score": 1.0 if 18.5 <= input_data.Calc_BMI <= 24.5 else max(0, 1 - abs(input_data.Calc_BMI - 21.5) / 15),
-                    "workout_score": min(input_data.Workout_Frequency / 5.0, 1.0)
+                    "age_score": max(0, 1 - abs(input_data.age - 25) / 25),
+                    "bmi_score": 1.0 if 18.5 <= input_data.bmi <= 24.5 else max(0, 1 - abs(input_data.bmi - 21.5) / 15),
+                    "workout_score": min(input_data.workout_frequency / 5.0, 1.0)
                 }
             }
             
@@ -205,18 +251,65 @@ class StepSyncModel:
 # Instantiate model handler
 model_handler = StepSyncModel()
 
+# ----------------- Error Handlers -----------------
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle validation errors with more user-friendly messages."""
+    errors = []
+    for error in exc.errors():
+        field = error["loc"][-1]
+        msg = error["msg"]
+        if "type" in error and error["type"] == "type_error.number":
+            errors.append(f"{field} must be a number")
+        elif "type" in error and error["type"] == "type_error.float":
+            errors.append(f"{field} must be a number")
+        else:
+            errors.append(f"{field}: {msg}")
+    
+    return JSONResponse(
+        status_code=422,
+        content={
+            "status": "error",
+            "code": 422,
+            "message": "Validation error",
+            "details": errors,
+            "help": "Please check that all fields are numbers within the valid ranges: age (18-80), bmi (15-40), workout_frequency (0-7)"
+        }
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle all other exceptions with a consistent format."""
+    logger.error(f"Unexpected error: {str(exc)}")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": "error",
+            "code": 500,
+            "message": "Internal server error",
+            "details": str(exc) if os.getenv("LOG_LEVEL", "").lower() == "debug" else "An unexpected error occurred"
+        }
+    )
+
 # ----------------- API Endpoints -----------------
 @app.get("/")
 async def root():
+    """Root endpoint with API information."""
     return {
         "status": "healthy",
         "message": "StepSync Health Score API",
         "version": "3.0.0",
-        "model_type": "Health Score Model"
+        "endpoints": {
+            "predict": "/predict",
+            "health": "/health",
+            "model_info": "/model-info"
+        },
+        "documentation": "/docs"
     }
 
 @app.get("/health")
 async def health_check():
+    """Health check endpoint."""
     return {
         "status": "healthy",
         "model_loaded": model_handler.model_components is not None,
@@ -226,7 +319,23 @@ async def health_check():
 @app.post("/predict", response_model=PredictionResponse)
 async def predict(user_input: UserInput):
     """Make a workout difficulty prediction based on user metrics."""
-    return model_handler.predict(user_input)
+    try:
+        # Convert to the format expected by the model
+        model_input = UserInput(
+            Age=user_input.age,
+            Calc_BMI=user_input.bmi,
+            Workout_Frequency=user_input.workout_frequency
+        )
+        return model_handler.predict(model_input)
+    except Exception as e:
+        logger.error(f"Prediction failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Prediction failed",
+                "error": str(e) if os.getenv("LOG_LEVEL", "").lower() == "debug" else "An error occurred during prediction"
+            }
+        )
 
 @app.get("/model-info")
 async def get_model_info():
