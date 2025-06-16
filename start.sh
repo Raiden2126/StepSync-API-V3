@@ -12,7 +12,7 @@ echo "Environment variables:"
 env | sort
 
 # Set default port if not provided
-PORT=${PORT:-8000}
+PORT=8000
 echo "Using port: $PORT"
 
 # Verify model file
