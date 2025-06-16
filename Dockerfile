@@ -37,14 +37,11 @@ RUN ls -l difficulty_model.pkl || echo "Model file not found"
 # Copy the rest of the application
 COPY . .
 
-# Make the start script executable
-RUN chmod +x start.sh
-
 # Run the verification script
 RUN python verify_model.py
 
 # Expose the port (this is just documentation, actual port is set at runtime)
 EXPOSE 8000
 
-# Use the shell script to start the application
-CMD ["./start.sh"]
+# Use the Python script to start the application
+CMD ["python", "start.py"]
