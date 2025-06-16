@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any, Union
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, field_validator, ValidationInfo
 from fastapi.exceptions import RequestValidationError
 
 # ----------------- Logging Setup -----------------
@@ -43,8 +43,9 @@ class UserInput(BaseModel):
     workout_frequency: float = Field(..., ge=0, le=7, description="Workout frequency in days per week", alias="Workout_Frequency")
 
     # Allow string inputs and convert them to float
-    @validator('age', 'bmi', 'workout_frequency', pre=True)
-    def convert_to_float(cls, v):
+    @field_validator('age', 'bmi', 'workout_frequency', mode='before')
+    @classmethod
+    def convert_to_float(cls, v: Any) -> float:
         if isinstance(v, str):
             try:
                 return float(v)
@@ -53,23 +54,25 @@ class UserInput(BaseModel):
         return v
 
     # Add validators for reasonable ranges without strict limits
-    @validator('age', 'bmi')
-    def validate_positive(cls, v, field):
+    @field_validator('age', 'bmi')
+    @classmethod
+    def validate_positive(cls, v: float, info: ValidationInfo) -> float:
         if v <= 0:
-            raise ValueError(f"{field.name} must be greater than 0")
+            raise ValueError(f"{info.field_name} must be greater than 0")
         return v
 
-    class Config:
+    model_config = {
         # Allow both camelCase and snake_case
-        allow_population_by_field_name = True
+        'populate_by_name': True,
         # Example: {"age": 25} or {"Age": 25} both work
-        schema_extra = {
+        'json_schema_extra': {
             "example": {
                 "age": 25,
                 "bmi": 22.5,
                 "workout_frequency": 3
             }
         }
+    }
 
 class PredictionResponse(BaseModel):
     difficulty_level: str
@@ -78,13 +81,13 @@ class PredictionResponse(BaseModel):
     health_score: float
     debug_info: Optional[Dict[str, Any]] = None
 
-    class Config:
+    model_config = {
         # Convert snake_case to camelCase in response
-        json_encoders = {
+        'json_encoders': {
             float: lambda v: round(v, 3)  # Round floats to 3 decimal places
-        }
+        },
         # Example response
-        schema_extra = {
+        'json_schema_extra': {
             "example": {
                 "difficultyLevel": "Medium",
                 "confidenceScore": 0.85,
@@ -97,6 +100,7 @@ class PredictionResponse(BaseModel):
                 }
             }
         }
+    }
 
 # ----------------- Model Handler -----------------
 class StepSyncModel:
