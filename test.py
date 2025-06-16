@@ -4,7 +4,7 @@ from typing import Dict, Any
 from datetime import datetime
 
 # API endpoints
-BASE_URL = "http://127.0.0.1:8000/"
+BASE_URL = "https://web-production-348f7.up.railway.app"
 PREDICT_URL = f"{BASE_URL}/predict"
 MODEL_INFO_URL = f"{BASE_URL}/model-info"
 HEALTH_URL = f"{BASE_URL}/health"

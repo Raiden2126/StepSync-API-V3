@@ -43,5 +43,5 @@ RUN python verify_model.py
 # Expose the port (this is just documentation, actual port is set at runtime)
 EXPOSE 8000
 
-# Use the Python script to start the application
-CMD ["python", "start.py"]
+# Use the specified uvicorn command
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
