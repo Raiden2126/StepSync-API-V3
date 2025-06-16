@@ -25,7 +25,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Create a directory for logs
 RUN mkdir -p /app/logs
 
-# Copy the model file first to ensure it exists
+# Copy the verification script first
+COPY verify_model.py .
+
+# Copy the model file
 COPY difficulty_model.pkl .
 
 # Verify model file exists
@@ -36,29 +39,6 @@ COPY . .
 
 # Make the start script executable
 RUN chmod +x start.sh
-
-# Create a simple Python script to verify the model
-RUN echo 'import os, sys, joblib; \
-    try: \
-        print("Current directory:", os.getcwd()); \
-        print("Files in directory:", os.listdir(".")); \
-        if not os.path.exists("difficulty_model.pkl"): \
-            print("Model file not found!"); \
-            sys.exit(1); \
-        print("Model file size:", os.path.getsize("difficulty_model.pkl")); \
-        try: \
-            model = joblib.load("difficulty_model.pkl"); \
-            print("Model loaded successfully"); \
-            print("Model type:", type(model)); \
-            if isinstance(model, dict): \
-                print("Model keys:", list(model.keys())); \
-                print("Model components:", {k: str(type(v)) for k, v in model.items()}); \
-        except Exception as e: \
-            print("Error loading model:", str(e)); \
-            sys.exit(1); \
-    except Exception as e: \
-        print("Error during verification:", str(e)); \
-        sys.exit(1);' > verify_model.py
 
 # Run the verification script
 RUN python verify_model.py
