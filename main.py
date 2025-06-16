@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import joblib
 import os
+import uvicorn
 from typing import Optional, Dict, Any
 
 from fastapi import FastAPI, HTTPException
@@ -240,3 +241,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("Shutting down StepSync Health Score API...")
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
