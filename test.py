@@ -1,204 +1,235 @@
 import requests
 import json
-from typing import Dict, Any
+import logging
+import sys
+from typing import Dict, Any, Optional
 from datetime import datetime
 
-# API endpoints
-BASE_URL = "https://web-production-348f7.up.railway.app"
-PREDICT_URL = f"{BASE_URL}/predict"
-MODEL_INFO_URL = f"{BASE_URL}/model-info"
-HEALTH_URL = f"{BASE_URL}/health"
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-def check_server_health() -> None:
-    """Check the overall health of the server and its components."""
-    print("\nChecking Server Health")
-    print("=" * 50)
-    
-    try:
-        response = requests.get(HEALTH_URL)
-        response.raise_for_status()
-        health_info = response.json()
-        
-        print("\nServer Status:")
-        print("-" * 30)
-        print(f"Status: {health_info.get('status', 'Unknown')}")
-        print(f"Model Loaded: {health_info.get('model_loaded', False)}")
-        
-        if health_info.get('model_info'):
-            print("\nDetailed Model Info:")
-            print("-" * 30)
-            model_info = health_info['model_info']
-            print(f"Model Type: {model_info.get('model_type', 'Unknown')}")
-            print(f"Feature Names: {model_info.get('feature_names', [])}")
-            
-            if 'thresholds' in model_info:
-                print("\nDifficulty Thresholds:")
-                print(f"Easy Threshold: {model_info['thresholds'].get('easy_threshold', 'Unknown')}")
-                print(f"Medium Threshold: {model_info['thresholds'].get('medium_threshold', 'Unknown')}")
-            
-            if 'health_score_stats' in model_info:
-                print("\nHealth Score Statistics:")
-                stats = model_info['health_score_stats']
-                print(f"Mean: {stats.get('mean', 'Unknown'):.3f}")
-                print(f"Std: {stats.get('std', 'Unknown'):.3f}")
-                print(f"Min: {stats.get('min', 'Unknown'):.3f}")
-                print(f"Max: {stats.get('max', 'Unknown'):.3f}")
-        
-        if not health_info.get('model_loaded'):
-            print("\n⚠️ WARNING: Model failed to load!")
-        else:
-            print("\n✓ Model loaded successfully")
-            
-    except requests.exceptions.RequestException as e:
-        print(f"Error checking server health: {str(e)}")
-        if hasattr(e.response, 'text'):
-            print(f"Server response: {e.response.text}")
-    except Exception as e:
-        print(f"Unexpected error: {str(e)}")
+class APITester:
+    def __init__(self, base_url: str):
+        """Initialize API tester with base URL."""
+        self.base_url = base_url.rstrip('/')
+        self.session = requests.Session()
+        self.session.headers.update({
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        })
 
-def check_model_status() -> None:
-    """Check if the model and thresholds are properly loaded."""
-    print("\nChecking Model Status")
-    print("=" * 50)
-    
-    try:
-        # Check model info
-        response = requests.get(MODEL_INFO_URL)
-        response.raise_for_status()
-        model_info = response.json()
-        
-        print("\nModel Information:")
-        print("-" * 30)
-        print(f"Model Type: {model_info.get('model_type', 'Unknown')}")
-        print(f"Feature Names: {model_info.get('feature_names', [])}")
-        
-        if 'thresholds' in model_info:
-            print("\nDifficulty Thresholds:")
-            print("-" * 30)
-            thresholds = model_info['thresholds']
-            print(f"Easy Threshold: {thresholds.get('easy_threshold', 'Not found')}")
-            print(f"Medium Threshold: {thresholds.get('medium_threshold', 'Not found')}")
+    def _make_request(self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Make HTTP request and handle response."""
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        try:
+            response = self.session.request(method, url, json=data)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request failed: {str(e)}")
+            if hasattr(e.response, 'json'):
+                try:
+                    error_data = e.response.json()
+                    logger.error(f"Error details: {json.dumps(error_data, indent=2)}")
+                except:
+                    logger.error(f"Response text: {e.response.text}")
+            raise
+
+    def test_health(self) -> bool:
+        """Test health check endpoint."""
+        try:
+            response = self._make_request('GET', '/health')
+            logger.info("Health check response:")
+            logger.info(json.dumps(response, indent=2))
+            return response.get('status') == 'healthy'
+        except Exception as e:
+            logger.error(f"Health check failed: {str(e)}")
+            return False
+
+    def test_model_info(self) -> bool:
+        """Test model info endpoint."""
+        try:
+            response = self._make_request('GET', '/model-info')
+            logger.info("Model info response:")
+            logger.info(json.dumps(response, indent=2))
+            return 'model_type' in response
+        except Exception as e:
+            logger.error(f"Model info check failed: {str(e)}")
+            return False
+
+    def test_prediction(self, test_cases: list) -> bool:
+        """Test prediction endpoint with various test cases."""
+        all_passed = True
+        for i, test_case in enumerate(test_cases, 1):
+            logger.info(f"\nTesting case {i}:")
+            logger.info(f"Input: {json.dumps(test_case, indent=2)}")
             
-        if 'health_score_stats' in model_info:
-            print("\nHealth Score Statistics:")
-            print("-" * 30)
-            stats = model_info['health_score_stats']
-            print(f"Mean: {stats.get('mean', 'Unknown'):.3f}")
-            print(f"Std: {stats.get('std', 'Unknown'):.3f}")
-            print(f"Min: {stats.get('min', 'Unknown'):.3f}")
-            print(f"Max: {stats.get('max', 'Unknown'):.3f}")
+            try:
+                # Test both camelCase and snake_case formats
+                response = self._make_request('POST', '/predict', test_case)
+                logger.info("Prediction response:")
+                logger.info(json.dumps(response, indent=2))
+                
+                # Verify response structure
+                required_fields = {
+                    'difficultyLevel', 'confidenceScore', 
+                    'recommendation', 'healthScore'
+                }
+                if not all(field in response for field in required_fields):
+                    logger.error(f"Missing required fields in response: {required_fields - set(response.keys())}")
+                    all_passed = False
+                    continue
+
+                # Verify value ranges
+                if not (0 <= response['confidenceScore'] <= 1):
+                    logger.error(f"Invalid confidence score: {response['confidenceScore']}")
+                    all_passed = False
+                if not (0 <= response['healthScore'] <= 1):
+                    logger.error(f"Invalid health score: {response['healthScore']}")
+                    all_passed = False
+                if response['difficultyLevel'] not in ['Easy', 'Medium', 'Hard']:
+                    logger.error(f"Invalid difficulty level: {response['difficultyLevel']}")
+                    all_passed = False
+
+            except Exception as e:
+                logger.error(f"Prediction test failed: {str(e)}")
+                all_passed = False
+
+        return all_passed
+
+    def test_validation(self, invalid_cases: list) -> bool:
+        """Test input validation with invalid cases."""
+        all_passed = True
+        for i, test_case in enumerate(invalid_cases, 1):
+            logger.info(f"\nTesting invalid case {i}:")
+            logger.info(f"Input: {json.dumps(test_case, indent=2)}")
             
-    except requests.exceptions.RequestException as e:
-        print(f"Error checking model status: {str(e)}")
-        if hasattr(e.response, 'text'):
-            print(f"Server response: {e.response.text}")
-    except json.JSONDecodeError as e:
-        print(f"Error decoding response: {str(e)}")
-    except Exception as e:
-        print(f"Unexpected error: {str(e)}")
+            try:
+                self._make_request('POST', '/predict', test_case)
+                logger.error("Expected validation error but request succeeded")
+                all_passed = False
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 422:
+                    logger.info("Validation error (expected):")
+                    try:
+                        error_data = e.response.json()
+                        logger.info(json.dumps(error_data, indent=2))
+                    except:
+                        logger.info(f"Response text: {e.response.text}")
+                else:
+                    logger.error(f"Unexpected error status: {e.response.status_code}")
+                    all_passed = False
 
-def format_response(response: Dict[str, Any]) -> str:
-    """Format the API response in a readable way."""
-    return f"""
-Workout Difficulty Assessment
-----------------------------
-Difficulty Level: {response['difficulty_level']}
-Health Score: {response['health_score']:.3f}
-Confidence Score: {response['confidence_score']:.2%}
-Recommendation: {response['recommendation']}
-
-Score Components:
-----------------
-Age Score: {response['debug_info']['score_components']['age_score']:.3f}
-BMI Score: {response['debug_info']['score_components']['bmi_score']:.3f}
-Workout Score: {response['debug_info']['score_components']['workout_score']:.3f}
-"""
-
-def test_prediction(data: Dict[str, float], test_name: str) -> None:
-    """Make a prediction request and print the results."""
-    print(f"\nTest Case: {test_name}")
-    print("-" * 50)
-    print(f"Input Data: {json.dumps(data, indent=2)}")
-    
-    try:
-        response = requests.post(PREDICT_URL, json=data)
-        response.raise_for_status()  # Raise an exception for bad status codes
-        
-        result = response.json()
-        print(format_response(result))
-        
-    except requests.exceptions.RequestException as e:
-        print(f"Error making request: {str(e)}")
-    except json.JSONDecodeError as e:
-        print(f"Error decoding response: {str(e)}")
-    except Exception as e:
-        print(f"Unexpected error: {str(e)}")
+        return all_passed
 
 def main():
-    """Run multiple test cases with different input combinations."""
-    print(f"Starting API Tests at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 80)
+    """Run API tests."""
+    # Get base URL from command line or use default
+    base_url = "https://web-production-348f7.up.railway.app"
+    tester = APITester(base_url)
+
+    # Test cases
+    valid_test_cases = [
+        # Test camelCase format with various ages and BMIs
+        {
+            "age": 15,  # Young age
+            "bmi": 18.0,  # Low BMI
+            "workout_frequency": 3
+        },
+        # Test snake_case format
+        {
+            "age": 85,  # Older age
+            "bmi": 35.0,  # Higher BMI
+            "workoutFrequency": 4
+        },
+        # Test PascalCase format (with aliases)
+        {
+            "Age": 45,
+            "BMI": 28.0,
+            "Workout_Frequency": 5
+        },
+        # Test edge cases for workout frequency
+        {
+            "age": 30,
+            "bmi": 25.0,
+            "workout_frequency": 0  # No workouts
+        },
+        {
+            "age": 35,
+            "bmi": 30.0,
+            "workout_frequency": 7  # Daily workouts
+        },
+        # Test extreme cases
+        {
+            "age": 100,  # Very old age
+            "bmi": 45.0,  # Very high BMI
+            "workout_frequency": 2
+        },
+        {
+            "age": 5,  # Very young age
+            "bmi": 12.0,  # Very low BMI
+            "workout_frequency": 1
+        }
+    ]
+
+    invalid_test_cases = [
+        # Invalid workout frequency
+        {"age": 25, "bmi": 22.5, "workout_frequency": -1},
+        {"age": 25, "bmi": 22.5, "workout_frequency": 8},
+        # Invalid types
+        {"age": "25", "bmi": "22.5", "workout_frequency": "3"},
+        {"age": None, "bmi": 22.5, "workout_frequency": 3},
+        # Missing fields
+        {"age": 25, "bmi": 22.5},
+        {"age": 25, "workout_frequency": 3},
+        {"bmi": 22.5, "workout_frequency": 3},
+        # Zero or negative values
+        {"age": 0, "bmi": 22.5, "workout_frequency": 3},
+        {"age": -1, "bmi": 22.5, "workout_frequency": 3},
+        {"age": 25, "bmi": 0, "workout_frequency": 3},
+        {"age": 25, "bmi": -1, "workout_frequency": 3},
+        # Extra fields
+        {"age": 25, "bmi": 22.5, "workout_frequency": 3, "extra": "field"}
+    ]
+
+    # Run tests
+    logger.info(f"Starting API tests against {base_url}")
+    logger.info("=" * 50)
+
+    # Test health endpoint
+    logger.info("\nTesting health endpoint...")
+    health_ok = tester.test_health()
+    logger.info(f"Health check {'passed' if health_ok else 'failed'}")
+
+    # Test model info endpoint
+    logger.info("\nTesting model info endpoint...")
+    model_info_ok = tester.test_model_info()
+    logger.info(f"Model info check {'passed' if model_info_ok else 'failed'}")
+
+    # Test valid predictions
+    logger.info("\nTesting valid predictions...")
+    predictions_ok = tester.test_prediction(valid_test_cases)
+    logger.info(f"Prediction tests {'passed' if predictions_ok else 'failed'}")
+
+    # Test validation
+    logger.info("\nTesting input validation...")
+    validation_ok = tester.test_validation(invalid_test_cases)
+    logger.info(f"Validation tests {'passed' if validation_ok else 'failed'}")
+
+    # Summary
+    logger.info("\nTest Summary:")
+    logger.info("=" * 50)
+    logger.info(f"Health Check: {'✓' if health_ok else '✗'}")
+    logger.info(f"Model Info: {'✓' if model_info_ok else '✗'}")
+    logger.info(f"Predictions: {'✓' if predictions_ok else '✗'}")
+    logger.info(f"Validation: {'✓' if validation_ok else '✗'}")
     
-    # First check server health
-    check_server_health()
-    
-    # Then check model status
-    check_model_status()
-    
-    print("\nRunning Prediction Tests")
-    print("=" * 50)
-    
-    # Test Case 1: Young, healthy, active person (should be Hard)
-    test_prediction({
-        "Age": 25.0,
-        "Calc_BMI": 22.0,
-        "Workout_Frequency": 4.0
-    }, "Young, Healthy, Active Person")
-    
-    # Test Case 2: Middle-aged, slightly overweight, moderate activity (should be Medium)
-    test_prediction({
-        "Age": 35.0,
-        "Calc_BMI": 25.0,
-        "Workout_Frequency": 2.0
-    }, "Middle-aged, Slightly Overweight, Moderate Activity")
-    
-    # Test Case 3: Older, overweight, low activity (should be Easy)
-    test_prediction({
-        "Age": 45.0,
-        "Calc_BMI": 28.0,
-        "Workout_Frequency": 1.0
-    }, "Older, Overweight, Low Activity")
-    
-    # Test Case 4: Very young, underweight, high activity
-    test_prediction({
-        "Age": 18.0,
-        "Calc_BMI": 18.5,
-        "Workout_Frequency": 7.0
-    }, "Very Young, Underweight, High Activity")
-    
-    # Test Case 5: Senior, obese, no activity
-    test_prediction({
-        "Age": 65.0,
-        "Calc_BMI": 35.0,
-        "Workout_Frequency": 0.0
-    }, "Senior, Obese, No Activity")
-    
-    # Test Case 6: Young adult, healthy BMI, moderate activity
-    test_prediction({
-        "Age": 30.0,
-        "Calc_BMI": 23.0,
-        "Workout_Frequency": 3.0
-    }, "Young Adult, Healthy BMI, Moderate Activity")
-    
-    # Test Case 7: Middle-aged, overweight, regular activity
-    test_prediction({
-        "Age": 40.0,
-        "Calc_BMI": 26.0,
-        "Workout_Frequency": 2.0
-    }, "Middle-aged, Overweight, Regular Activity")
-    
-    print("\n" + "=" * 80)
-    print(f"API Tests completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    all_passed = all([health_ok, model_info_ok, predictions_ok, validation_ok])
+    logger.info(f"\nOverall: {'All tests passed! ✓' if all_passed else 'Some tests failed! ✗'}")
 
 if __name__ == "__main__":
     main()

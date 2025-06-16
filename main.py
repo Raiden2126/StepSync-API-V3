@@ -38,8 +38,8 @@ app.add_middleware(
 # ----------------- Request Schema ----------------
 class UserInput(BaseModel):
     # More flexible field names with aliases for JavaScript compatibility
-    age: float = Field(..., ge=18, le=80, description="User's age in years", alias="Age")
-    bmi: float = Field(..., ge=15, le=40, description="User's calculated BMI", alias="Calc_BMI")
+    age: float = Field(..., description="User's age in years", alias="Age")
+    bmi: float = Field(..., description="User's BMI", alias="BMI")
     workout_frequency: float = Field(..., ge=0, le=7, description="Workout frequency in days per week", alias="Workout_Frequency")
 
     # Allow string inputs and convert them to float
@@ -50,6 +50,13 @@ class UserInput(BaseModel):
                 return float(v)
             except ValueError:
                 raise ValueError(f"Could not convert {v} to a number")
+        return v
+
+    # Add validators for reasonable ranges without strict limits
+    @validator('age', 'bmi')
+    def validate_positive(cls, v, field):
+        if v <= 0:
+            raise ValueError(f"{field.name} must be greater than 0")
         return v
 
     class Config:
@@ -95,7 +102,7 @@ class PredictionResponse(BaseModel):
 class StepSyncModel:
     def __init__(self):
         self.model_components: Optional[Dict[str, Any]] = None
-        self.feature_names = ["Age", "Calc_BMI", "Workout_Frequency"]
+        self.feature_names = ["age", "bmi", "workout_frequency"]
         self._load_model_and_assets()
 
     def _load_model_and_assets(self) -> None:
@@ -137,12 +144,12 @@ class StepSyncModel:
 
     def _validate_input(self, input_data: UserInput) -> None:
         """Validate input data ranges."""
-        if not (18 <= input_data.age <= 80):
-            raise HTTPException(status_code=400, detail="Age must be between 18 and 80")
-        if not (15 <= input_data.bmi <= 40):
-            raise HTTPException(status_code=400, detail="BMI must be between 15 and 40")
+        # Only validate workout frequency as it's based on days of the week
         if not (0 <= input_data.workout_frequency <= 7):
-            raise HTTPException(status_code=400, detail="Workout frequency must be between 0 and 7 days")
+            raise HTTPException(
+                status_code=400, 
+                detail="Workout frequency must be between 0 and 7 days"
+            )
 
     def _calculate_health_score(self, input_data: UserInput) -> float:
         """Calculate health score based on input metrics."""
@@ -150,26 +157,23 @@ class StepSyncModel:
         bmi = input_data.bmi
         workout_freq = input_data.workout_frequency
         
-        # Age score: Peak at 25, decline as you move away
-        age_score = max(0, 1 - abs(age - 25) / 25)  # Normalized 0-1
+        # Age score: More flexible scoring that doesn't penalize extreme ages as harshly
+        age_score = 1.0 / (1.0 + abs(age - 25) / 50)  # Smoother curve for age scoring
         
-        # BMI score: Peak between 18.5-24.5 (healthy range)
-        if 18.5 <= bmi <= 24.5:
+        # BMI score: More flexible scoring that considers a wider range of healthy BMIs
+        if 18.5 <= bmi <= 24.9:  # Standard healthy BMI range
             bmi_score = 1.0
         else:
-            # Distance from healthy range
-            if bmi < 18.5:
-                bmi_score = max(0, 1 - (18.5 - bmi) / 10)
-            else:  # bmi > 24.5
-                bmi_score = max(0, 1 - (bmi - 24.5) / 15)
+            # Smoother curve for BMI scoring
+            bmi_score = 1.0 / (1.0 + abs(bmi - 21.7) / 20)  # 21.7 is the midpoint of healthy range
         
-        # Workout frequency score: Higher is better (1-5 scale)
-        workout_score = min(workout_freq / 5.0, 1.0)  # Normalize to 0-1
+        # Workout score: Linear scale up to 5 days, then plateaus
+        workout_score = min(workout_freq / 5.0, 1.0)
         
-        # Combine scores
-        total_score = (age_score + bmi_score + workout_score) / 3
+        # Calculate final health score with equal weights
+        health_score = (age_score + bmi_score + workout_score) / 3.0
         
-        return total_score
+        return health_score
 
     def _interpret_prediction(self, health_score: float) -> tuple[str, str]:
         """Convert health score to difficulty level and recommendation."""
@@ -184,57 +188,79 @@ class StepSyncModel:
             return "Hard", "You're ready for high-intensity workouts. Challenge yourself with complex exercises and advanced training techniques."
 
     def predict(self, input_data: UserInput) -> PredictionResponse:
-        """Make prediction using the health score model."""
+        """Make a prediction based on input data."""
         try:
             # Validate input
             self._validate_input(input_data)
             
             # Calculate health score
             health_score = self._calculate_health_score(input_data)
-            logger.info(f"Health score calculated: {health_score}")
             
-            # Get difficulty level and recommendation
-            difficulty_level, recommendation = self._interpret_prediction(health_score)
-            
-            # Calculate confidence score based on distance from thresholds
+            # Get thresholds from model
             easy_threshold = self.model_components['easy_threshold']
             medium_threshold = self.model_components['medium_threshold']
             
-            if health_score <= easy_threshold:
-                confidence = 1 - (health_score / easy_threshold)
-            elif health_score <= medium_threshold:
-                confidence = 1 - abs(health_score - (easy_threshold + medium_threshold) / 2) / (medium_threshold - easy_threshold)
+            # Determine difficulty level
+            if health_score < easy_threshold:
+                difficulty = "Easy"
+                recommendation = (
+                    "Based on your current metrics, you should start with low-intensity workouts. "
+                    "Focus on building a consistent routine and gradually increasing intensity."
+                )
+            elif health_score < medium_threshold:
+                difficulty = "Medium"
+                recommendation = (
+                    "You can handle moderate intensity workouts. "
+                    "Mix cardio and strength training while maintaining proper form and recovery."
+                )
             else:
+                difficulty = "Hard"
+                recommendation = (
+                    "You're ready for high-intensity workouts. "
+                    "Challenge yourself with advanced exercises while maintaining proper form and recovery."
+                )
+            
+            # Calculate confidence score based on how far the health score is from thresholds
+            if difficulty == "Easy":
+                confidence = 1 - (health_score / easy_threshold)
+            elif difficulty == "Medium":
+                confidence = 1 - abs(health_score - (easy_threshold + medium_threshold) / 2) / ((medium_threshold - easy_threshold) / 2)
+            else:  # Hard
                 confidence = (health_score - medium_threshold) / (1 - medium_threshold)
             
-            confidence_score = float(max(0, min(1, confidence)))
-            
-            # Prepare debug info
-            debug_info = {
-                "input_data": input_data.dict(),
-                "health_score": float(health_score),
-                "thresholds": {
-                    "easy_threshold": easy_threshold,
-                    "medium_threshold": medium_threshold
-                },
-                "score_components": {
-                    "age_score": max(0, 1 - abs(input_data.age - 25) / 25),
-                    "bmi_score": 1.0 if 18.5 <= input_data.bmi <= 24.5 else max(0, 1 - abs(input_data.bmi - 21.5) / 15),
-                    "workout_score": min(input_data.workout_frequency / 5.0, 1.0)
-                }
-            }
+            # Ensure confidence is between 0 and 1
+            confidence = max(0, min(1, confidence))
             
             return PredictionResponse(
-                difficulty_level=difficulty_level,
-                confidence_score=confidence_score,
+                difficulty_level=difficulty,
+                confidence_score=confidence,
                 recommendation=recommendation,
-                health_score=float(health_score),
-                debug_info=debug_info
+                health_score=health_score,
+                debug_info={
+                    "input_data": {
+                        "age": input_data.age,
+                        "bmi": input_data.bmi,
+                        "workout_frequency": input_data.workout_frequency
+                    },
+                    "health_score": health_score,
+                    "thresholds": {
+                        "easy_threshold": easy_threshold,
+                        "medium_threshold": medium_threshold
+                    },
+                    "score_components": {
+                        "age_score": age_score,
+                        "bmi_score": bmi_score,
+                        "workout_score": workout_score
+                    }
+                }
             )
             
         except Exception as e:
-            logger.error(f"Prediction failed: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+            logger.error(f"Prediction error: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error making prediction: {str(e)}"
+            )
 
     def get_model_info(self) -> Dict[str, Any]:
         """Get comprehensive information about the loaded model."""
@@ -255,6 +281,13 @@ model_handler = StepSyncModel()
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle validation errors with more user-friendly messages."""
+    # Log the raw request body for debugging
+    try:
+        body = await request.json()
+        logger.error(f"Invalid request body: {body}")
+    except:
+        logger.error("Could not parse request body")
+    
     errors = []
     for error in exc.errors():
         field = error["loc"][-1]
@@ -263,6 +296,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             errors.append(f"{field} must be a number")
         elif "type" in error and error["type"] == "type_error.float":
             errors.append(f"{field} must be a number")
+        elif "type" in error and error["type"] == "value_error.missing":
+            errors.append(f"Missing required field: {field}")
         else:
             errors.append(f"{field}: {msg}")
     
@@ -273,7 +308,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "code": 422,
             "message": "Validation error",
             "details": errors,
-            "help": "Please check that all fields are numbers within the valid ranges: age (18-80), bmi (15-40), workout_frequency (0-7)"
+            "help": "Please ensure all fields are numbers and workout_frequency is between 0 and 7. Field names can be: age/Age, bmi/BMI, workout_frequency/Workout_Frequency"
         }
     )
 
@@ -320,10 +355,13 @@ async def health_check():
 async def predict(user_input: UserInput):
     """Make a workout difficulty prediction based on user metrics."""
     try:
+        # Log the incoming request for debugging
+        logger.info(f"Received prediction request: {user_input.dict()}")
+        
         # Convert to the format expected by the model
         model_input = UserInput(
             Age=user_input.age,
-            Calc_BMI=user_input.bmi,
+            BMI=user_input.bmi,
             Workout_Frequency=user_input.workout_frequency
         )
         return model_handler.predict(model_input)
