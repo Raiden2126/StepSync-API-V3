@@ -42,17 +42,6 @@ class UserInput(BaseModel):
     bmi: float = Field(..., description="User's BMI", alias="BMI")
     workout_frequency: float = Field(..., ge=0, le=7, description="Workout frequency in days per week", alias="Workout_Frequency")
 
-    # Allow string inputs and convert them to float
-    @field_validator('age', 'bmi', 'workout_frequency', mode='before')
-    @classmethod
-    def convert_to_float(cls, v: Any) -> float:
-        if isinstance(v, str):
-            try:
-                return float(v)
-            except ValueError:
-                raise ValueError(f"Could not convert {v} to a number")
-        return v
-
     # Add validators for reasonable ranges without strict limits
     @field_validator('age', 'bmi')
     @classmethod
@@ -64,6 +53,8 @@ class UserInput(BaseModel):
     model_config = {
         # Allow both camelCase and snake_case
         'populate_by_name': True,
+        # Reject extra fields
+        'extra': 'forbid',
         # Example: {"age": 25} or {"Age": 25} both work
         'json_schema_extra': {
             "example": {
