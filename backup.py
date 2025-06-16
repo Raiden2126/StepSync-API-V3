@@ -56,15 +56,37 @@ class StepSyncModel:
         try:
             # Load model components
             model_path = "difficulty_model.pkl"
-            if not os.path.exists(model_path):
-                raise FileNotFoundError(f"Model file not found: {model_path}")
+            logger.info(f"Attempting to load model from: {model_path}")
             
-            self.model_components = joblib.load(model_path)
-            logger.info(f"Model components loaded successfully: {self.model_components.keys()}")
+            if not os.path.exists(model_path):
+                error_msg = f"Model file not found at path: {model_path}"
+                logger.error(error_msg)
+                logger.error(f"Current working directory: {os.getcwd()}")
+                logger.error(f"Directory contents: {os.listdir('.')}")
+                raise FileNotFoundError(error_msg)
+            
+            try:
+                self.model_components = joblib.load(model_path)
+                logger.info(f"Model components loaded successfully: {self.model_components.keys() if isinstance(self.model_components, dict) else 'Model loaded'}")
+                
+                # Verify required components
+                required_keys = ['easy_threshold', 'medium_threshold', 'health_score_stats']
+                if isinstance(self.model_components, dict):
+                    missing_keys = [key for key in required_keys if key not in self.model_components]
+                    if missing_keys:
+                        error_msg = f"Model missing required components: {missing_keys}"
+                        logger.error(error_msg)
+                        raise ValueError(error_msg)
+                
+            except Exception as e:
+                error_msg = f"Error loading model file: {str(e)}"
+                logger.error(error_msg)
+                raise
             
         except Exception as e:
-            logger.error(f"Failed to load model assets: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Failed to load model assets: {str(e)}")
+            error_msg = f"Failed to load model assets: {str(e)}"
+            logger.error(error_msg)
+            raise HTTPException(status_code=500, detail=error_msg)
 
     def _validate_input(self, input_data: UserInput) -> None:
         """Validate input data ranges."""
