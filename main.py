@@ -75,13 +75,16 @@ class UserInput(BaseModel):
     }
 
 class PredictionResponse(BaseModel):
-    difficulty_level: str
-    confidence_score: float
+    difficulty_level: str = Field(..., alias="difficultyLevel")
+    confidence_score: float = Field(..., alias="confidenceScore")
     recommendation: str
-    health_score: float
-    debug_info: Optional[Dict[str, Any]] = None
+    health_score: float = Field(..., alias="healthScore")
+    debug_info: Optional[Dict[str, Any]] = Field(None, alias="debugInfo")
 
     model_config = {
+        # This ensures responses use the alias names (camelCase)
+        'populate_by_name': True,
+        'by_alias': True,
         # Convert snake_case to camelCase in response
         'json_encoders': {
             float: lambda v: round(v, 3)  # Round floats to 3 decimal places
