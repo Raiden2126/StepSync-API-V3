@@ -1,20 +1,42 @@
-# StepSync Health Score API
+# StepSync Health Score API v3.0.0
 
-A FastAPI-based service that predicts workout difficulty levels based on user health metrics. The API uses a machine learning model to calculate a health score and determine appropriate workout intensity levels.
+A FastAPI-based service that predicts workout difficulty levels based on user health metrics. The API uses a sophisticated health score algorithm to calculate appropriate workout intensity levels.
 
 ## Features
 
-- **Flexible Input Format**: Supports multiple input formats (camelCase, snake_case, PascalCase)
-- **Comprehensive Validation**: Detailed input validation with clear error messages
-- **Health Score Calculation**: Sophisticated algorithm considering age, BMI, and workout frequency
-- **Detailed Response**: Includes difficulty level, confidence score, and personalized recommendations
-- **Robust Error Handling**: Clear error messages and proper HTTP status codes
-- **CORS Support**: Ready for web and mobile applications
-- **Comprehensive Testing**: Built-in test suite for API validation
+- **Flexible Input Format**: Supports multiple input formats (camelCase, snake_case, PascalCase) with automatic field name conversion
+- **Comprehensive Validation**: Detailed input validation with clear error messages and type conversion
+- **Advanced Health Score Algorithm**: Sophisticated scoring system considering age, BMI, and workout frequency with smooth curves for better accuracy
+- **Detailed Response**: Includes difficulty level, confidence score, personalized recommendations, and debug information
+- **Robust Error Handling**: Clear error messages, proper HTTP status codes, and detailed validation feedback
+- **Enhanced CORS Support**: Ready for web and mobile applications with configurable origins
+- **Comprehensive Testing**: Built-in test suite with extensive test cases for API validation
+- **Detailed Logging**: Configurable logging levels for debugging and monitoring
 
 ## API Endpoints
 
-### 1. Health Check
+### 1. Root
+```http
+GET /
+```
+Returns basic API information and available endpoints.
+
+**Response Example:**
+```json
+{
+    "status": "healthy",
+    "message": "StepSync Health Score API",
+    "version": "3.0.0",
+    "endpoints": {
+        "predict": "/predict",
+        "health": "/health",
+        "model_info": "/model-info"
+    },
+    "documentation": "/docs"
+}
+```
+
+### 2. Health Check
 ```http
 GET /health
 ```
@@ -29,14 +51,17 @@ Returns the API's health status and model information.
         "model_type": "Health Score Model",
         "feature_names": ["Age", "BMI", "Workout_Frequency"],
         "thresholds": {
-            "easy_threshold": 0.575,
-            "medium_threshold": 0.731
+            "easy_threshold": 0.57,
+            "medium_threshold": 0.73
+        },
+        "health_score_stats": {
+            // Model statistics and metrics
         }
     }
 }
 ```
 
-### 2. Prediction
+### 3. Prediction
 ```http
 POST /predict
 ```
@@ -45,9 +70,9 @@ Predicts workout difficulty based on user metrics.
 **Request Body:**
 ```json
 {
-    "age": 25,              // Required: 18-80
-    "bmi": 22.5,            // Required: 15-40
-    "workout_frequency": 3  // Required: 0-7
+    "age": 25,              // Required: Must be positive
+    "bmi": 22.5,            // Required: Must be positive
+    "workout_frequency": 3  // Required: 0-7 days per week
 }
 ```
 
@@ -71,14 +96,19 @@ Predicts workout difficulty based on user metrics.
         },
         "healthScore": 0.65,
         "thresholds": {
-            "easyThreshold": 0.575,
-            "mediumThreshold": 0.731
+            "easyThreshold": 0.57,
+            "mediumThreshold": 0.73
+        },
+        "scoreComponents": {
+            "ageScore": 0.75,
+            "bmiScore": 0.85,
+            "workoutScore": 0.60
         }
     }
 }
 ```
 
-### 3. Model Information
+### 4. Model Information
 ```http
 GET /model-info
 ```
@@ -100,9 +130,9 @@ The API uses standard HTTP status codes and provides detailed error messages:
     "message": "Validation error",
     "details": [
         "age must be a number",
-        "bmi must be between 15 and 40"
+        "bmi must be positive"
     ],
-    "help": "Please check that all fields are numbers within the valid ranges: age (18-80), bmi (15-40), workout_frequency (0-7)"
+    "help": "Please ensure all fields are numbers and workout_frequency is between 0 and 7. Field names can be: age/Age, bmi/BMI, workout_frequency/Workout_Frequency"
 }
 ```
 
@@ -156,7 +186,7 @@ const makePrediction = async (userData) => {
 
 ## Testing
 
-The API includes a comprehensive test suite. To run the tests:
+The API includes a comprehensive test suite with extensive test cases. To run the tests:
 
 1. Install dependencies:
 ```bash
@@ -175,21 +205,34 @@ python test.py https://your-api-url
 The test suite includes:
 - Health check validation
 - Model information verification
-- Prediction testing with various input formats
-- Input validation testing
+- Prediction testing with various input formats (camelCase, snake_case, PascalCase)
+- Input validation testing (invalid types, missing fields, out-of-range values)
 - Error handling verification
+- Edge case testing (extreme ages, BMIs, workout frequencies)
 
 ## Deployment
 
 The API is configured for deployment on Railway with the following files:
-- `Dockerfile`: Container configuration
-- `requirements.txt`: Python dependencies
-- `Procfile`: Process configuration
+- `Dockerfile`: Container configuration using Python 3.9 slim image
+- `requirements.txt`: Python dependencies with specific versions
+- `Procfile`: Process configuration for Railway
 - `nixpacks.toml`: Build configuration
 
 ### Environment Variables
-- `LOG_LEVEL`: Set to "debug" for detailed logging
+- `LOG_LEVEL`: Set to "debug" for detailed logging (default: info)
 - `PORT`: Server port (default: 8080)
+- `PYTHONPATH`: Set to /app in container
+- `PYTHONDONTWRITEBYTECODE`: Disabled bytecode writing
+- `PYTHONUNBUFFERED`: Unbuffered Python output
+
+### Dependencies
+Key dependencies include:
+- FastAPI 0.104.1
+- Uvicorn 0.24.0
+- NumPy 1.26.2
+- Pandas 2.1.3
+- Joblib 1.3.2
+- Pydantic 2.5.2
 
 ## Contributing
 
