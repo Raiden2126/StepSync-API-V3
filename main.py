@@ -157,27 +157,38 @@ class StepSyncModel:
 
     def _calculate_health_score(self, input_data: UserInput) -> float:
         """Calculate health score based on input metrics."""
-        age = input_data.age
-        bmi = input_data.bmi
-        workout_freq = input_data.workout_frequency
-        
-        # Age score: More flexible scoring that doesn't penalize extreme ages as harshly
-        age_score = 1.0 / (1.0 + abs(age - 25) / 50)  # Smoother curve for age scoring
-        
-        # BMI score: More flexible scoring that considers a wider range of healthy BMIs
-        if 18.5 <= bmi <= 24.9:  # Standard healthy BMI range
-            bmi_score = 1.0
-        else:
-            # Smoother curve for BMI scoring
-            bmi_score = 1.0 / (1.0 + abs(bmi - 21.7) / 20)  # 21.7 is the midpoint of healthy range
-        
-        # Workout score: Linear scale up to 5 days, then plateaus
-        workout_score = min(workout_freq / 5.0, 1.0)
-        
-        # Calculate final health score with equal weights
-        health_score = (age_score + bmi_score + workout_score) / 3.0
-        
-        return health_score
+        try:
+            age = input_data.age
+            bmi = input_data.bmi
+            workout_freq = input_data.workout_frequency
+            
+            # Age score: More flexible scoring that doesn't penalize extreme ages as harshly
+            age_score = 1.0 / (1.0 + abs(age - 25) / 50)  # Smoother curve for age scoring
+            
+            # BMI score: More flexible scoring that considers a wider range of healthy BMIs
+            if 18.5 <= bmi <= 24.9:  # Standard healthy BMI range
+                bmi_score = 1.0
+            else:
+                # Smoother curve for BMI scoring
+                bmi_score = 1.0 / (1.0 + abs(bmi - 21.7) / 20)  # 21.7 is the midpoint of healthy range
+            
+            # Workout score: Linear scale up to 5 days, then plateaus
+            workout_score = min(workout_freq / 5.0, 1.0)
+            
+            # Calculate final health score with equal weights
+            health_score = (age_score + bmi_score + workout_score) / 3.0
+            
+            # Store score components for debug info
+            self._last_score_components = {
+                "age_score": age_score,
+                "bmi_score": bmi_score,
+                "workout_score": workout_score
+            }
+            
+            return health_score
+        except Exception as e:
+            logger.error(f"Error calculating health score: {str(e)}", exc_info=True)
+            raise ValueError(f"Failed to calculate health score: {str(e)}")
 
     def _interpret_prediction(self, health_score: float) -> tuple[str, str]:
         """Convert health score to difficulty level and recommendation."""
@@ -204,7 +215,7 @@ class StepSyncModel:
             easy_threshold = self.model_components['easy_threshold']
             medium_threshold = self.model_components['medium_threshold']
             
-            # Determine difficulty level
+            # Determine difficulty level and recommendation
             if health_score < easy_threshold:
                 difficulty = "Easy"
                 recommendation = (
@@ -235,6 +246,9 @@ class StepSyncModel:
             # Ensure confidence is between 0 and 1
             confidence = max(0, min(1, confidence))
             
+            # Get score components from last calculation
+            score_components = getattr(self, '_last_score_components', {})
+            
             return PredictionResponse(
                 difficulty_level=difficulty,
                 confidence_score=confidence,
@@ -251,20 +265,13 @@ class StepSyncModel:
                         "easy_threshold": easy_threshold,
                         "medium_threshold": medium_threshold
                     },
-                    "score_components": {
-                        "age_score": age_score,
-                        "bmi_score": bmi_score,
-                        "workout_score": workout_score
-                    }
+                    "score_components": score_components
                 }
             )
             
         except Exception as e:
-            logger.error(f"Prediction error: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error making prediction: {str(e)}"
-            )
+            logger.error(f"Prediction error: {str(e)}", exc_info=True)
+            raise ValueError(f"Error making prediction: {str(e)}")
 
     def get_model_info(self) -> Dict[str, Any]:
         """Get comprehensive information about the loaded model."""
@@ -360,22 +367,31 @@ async def predict(user_input: UserInput):
     """Make a workout difficulty prediction based on user metrics."""
     try:
         # Log the incoming request for debugging
-        logger.info(f"Received prediction request: {user_input.dict()}")
+        logger.info(f"Received prediction request: {user_input.model_dump()}")
         
-        # Convert to the format expected by the model
-        model_input = UserInput(
-            Age=user_input.age,
-            BMI=user_input.bmi,
-            Workout_Frequency=user_input.workout_frequency
-        )
-        return model_handler.predict(model_input)
+        # Make prediction directly with the input
+        try:
+            return model_handler.predict(user_input)
+        except Exception as e:
+            logger.error(f"Model prediction error: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "message": "Prediction failed",
+                    "error": str(e) if os.getenv("LOG_LEVEL", "").lower() == "debug" else "An error occurred during prediction"
+                }
+            )
+    except HTTPException:
+        # Re-raise HTTP exceptions as they're already properly formatted
+        raise
     except Exception as e:
-        logger.error(f"Prediction failed: {str(e)}")
+        # Log unexpected errors
+        logger.error(f"Unexpected error in predict endpoint: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={
-                "message": "Prediction failed",
-                "error": str(e) if os.getenv("LOG_LEVEL", "").lower() == "debug" else "An error occurred during prediction"
+                "message": "Internal server error",
+                "error": str(e) if os.getenv("LOG_LEVEL", "").lower() == "debug" else "An unexpected error occurred"
             }
         )
 
