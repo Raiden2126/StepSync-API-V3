@@ -41,7 +41,7 @@ COPY . .
 RUN python verify_model.py
 
 # Expose the port (this is just documentation, actual port is set at runtime)
-EXPOSE 8000
+EXPOSE 10000
 
 # Use the specified uvicorn command
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]
