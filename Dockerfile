@@ -7,7 +7,6 @@ WORKDIR /app
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PORT=8000 \
     PYTHONPATH=/app
 
 # Install system dependencies
@@ -28,11 +27,14 @@ COPY difficulty_model.pkl .
 # Copy the rest of the application
 COPY . .
 
+# Make the start script executable
+RUN chmod +x start.sh
+
 # Verify model file exists and is readable
 RUN python -c "import joblib; model = joblib.load('difficulty_model.pkl'); print('Model loaded successfully:', model.keys() if isinstance(model, dict) else 'Model loaded')"
 
-# Expose the port
-EXPOSE ${PORT}
+# Expose the port (this is just documentation, actual port is set at runtime)
+EXPOSE 8000
 
-# Command to run the application with debug logging
-CMD exec uvicorn backup:app --host 0.0.0.0 --port ${PORT} --log-level debug --reload
+# Use the shell script to start the application
+CMD ["./start.sh"]
